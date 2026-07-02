@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR 스캐너</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif;
+    background: #000;
+    min-height: 100vh;
+  }
+  #reader { width: 100%; max-width: 480px; margin: 0 auto; }
+  #reader video { border-radius: 0; }
+
+  .top-bar { color: #fff; text-align: center; padding: 14px; font-size: 15px; font-weight: 600; }
+
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    padding: 20px;
+  }
+  .overlay.show { display: flex; }
+
+  .result-card {
+    background: #fff;
+    border-radius: 20px;
+    padding: 40px 28px;
+    max-width: 340px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+  .result-card.approve { background: #eafff2; border: 2px solid #22c55e; }
+  .result-card.reject { background: #fff; }
+
+  .icon {
+    width: 72px; height: 72px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 16px; font-size: 36px; color: #fff;
+  }
+  .icon.approve { background: #22c55e; }
+  .icon.reject { background: #9ca3af; }
+
+  .result-title { font-size: 28px; font-weight: 800; margin-bottom: 12px; color: #111; }
+  .result-name { font-size: 20px; font-weight: 700; color: #111; }
+  .result-sub { font-size: 14px; color: #666; margin-top: 2px; margin-bottom: 4px; }
+  .result-detail { color: #22c55e; font-weight: 700; font-size: 15px; margin-top: 4px; }
+
+  .btn-next {
+    margin-top: 24px; width: 100%; background: #111; color: #fff;
+    border: none; border-radius: 12px; padding: 14px; font-size: 16px;
+    font-weight: 700; cursor: pointer;
+  }
+  .close-hint { margin-top: 12px; font-size: 12px; color: #999; }
+
+  .checking {
+    display: none;
+    position: fixed;
+    bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: rgba(255,255,255,0.9);
+    padding: 8px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; color: #333;
+  }
+  .checking.show { display: block; }
+</style>
+</head>
+<body>
+  <div class="top-bar">QR 스캐너 - 화면을 QR코드에 비춰주세요</div>
+  <div id="reader"></div>
+  <div class="checking" id="checking">확인 중...</div>
+
+  <div class="overlay" id="overlay">
+    <div class="result-card" id="resultCard">
+      <div class="icon" id="resultIcon"></div>
+      <div class="result-title" id="resultTitle"></div>
+      <div class="result-name" id="resultName"></div>
+      <div class="result-sub" id="resultSub"></div>
+      <div class="result-detail" id="resultDetail"></div>
+      <button class="btn-next" id="nextBtn">다음 사람 스캔</button>
+      <div class="close-hint">화면 어디든 눌러도 닫힙니다.</div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    // ▼▼▼ 배포 후 여기만 본인의 GAS 웹앱 URL로 교체하세요 (끝에 /exec 포함) ▼▼▼
+    const GAS_URL = "https://script.google.com/macros/s/여기에_고양07_배포된_스크립트ID/exec";
+    // ▲▲▲ 여기만 교체 ▲▲▲
+
+    let isProcessing = false;
+    const overlay = document.getElementById('overlay');
+    const checkingEl = document.getElementById('checking');
+
+    const html5QrCode = new Html5Qrcode("reader");
+    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+    function startScanning() {
+      html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        onScanSuccess
+      ).catch(function (err) {
+        alert('카메라를 시작할 수 없습니다: ' + err);
+      });
+    }
+
+    // JSONP로 GAS에 토큰 조회 (CORS 우회, script 태그 방식)
+    function checkTokenJSONP(token) {
+      return new Promise(function (resolve) {
+        const cbName = 'jsonp_cb_' + Date.now();
+        window[cbName] = function (data) {
+          resolve(data);
+          delete window[cbName];
+          script.remove();
+        };
+        const script = document.createElement('script');
+        script.src = GAS_URL + '?callback=' + cbName + '&token=' + encodeURIComponent(token);
+        script.onerror = function () {
+          resolve({ approved: false, reason: '서버 연결 실패' });
+          delete window[cbName];
+        };
+        document.body.appendChild(script);
+      });
+    }
+
+    function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      isProcessing = true;
+      html5QrCode.pause(true);
+      checkingEl.classList.add('show');
+
+      checkTokenJSONP(decodedText).then(function (res) {
+        checkingEl.classList.remove('show');
+        showResult(res);
+      });
+    }
+
+    function showResult(res) {
+      const card = document.getElementById('resultCard');
+      const icon = document.getElementById('resultIcon');
+      const title = document.getElementById('resultTitle');
+      const name = document.getElementById('resultName');
+      const sub = document.getElementById('resultSub');
+      const detail = document.getElementById('resultDetail');
+
+      if (res.approved) {
+        card.className = 'result-card approve';
+        icon.className = 'icon approve';
+        icon.textContent = '✓';
+        title.textContent = '승인';
+        name.textContent = res.name;
+        sub.textContent = res.affiliation || '';
+        detail.textContent = res.category;
+      } else {
+        card.className = 'result-card reject';
+        icon.className = 'icon reject';
+        icon.textContent = '✕';
+        title.textContent = '거부';
+        name.textContent = '';
+        sub.textContent = res.reason || '미등록 또는 다른 행사 QR 입니다.';
+        detail.textContent = '';
+      }
+      overlay.classList.add('show');
+    }
+
+    function resumeScanning() {
+      overlay.classList.remove('show');
+      isProcessing = false;
+      html5QrCode.resume();
+    }
+
+    document.getElementById('nextBtn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      resumeScanning();
+    });
+    overlay.addEventListener('click', resumeScanning);
+
+    startScanning();
+  </script>
+</body>
+</html>
